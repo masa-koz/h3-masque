@@ -12,9 +12,9 @@ async fn main() -> anyhow::Result<()> {
 
     let sock = UdpSocket::bind("0.0.0.0:0").await?;
     sock.connect("127.0.0.1:4443").await?;
-    let mut buf = [0; 1024];
+    let mut buf = [0; 2048];
     loop {
-        let len = sock.send(b"hello world").await?;
+        let len = sock.send(&buf[..1300]).await?;
         info!("{} bytes sent", len);
 
         let len = sock.recv(&mut buf).await?;

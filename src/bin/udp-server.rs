@@ -11,7 +11,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let sock = UdpSocket::bind("127.0.0.1:8443").await?;
-    let mut buf = [0; 1024];
+    let mut buf = [0; 2048];
     loop {
         let (len, addr) = sock.recv_from(&mut buf).await?;
         info!("{:?} bytes received from {:?}", len, addr);

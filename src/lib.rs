@@ -104,7 +104,7 @@ pub async fn open_udp_proxy(
             stream_id_sender.send(stream.id()).await?;
             let mut datagram_sender = datagram_tx_receiver.recv().await.unwrap();
 
-            let mut is_connected = false;
+            let mut client_addr = None;
             let mut buf = [0; 65535];
             loop {
                 tokio::select! {
@@ -112,11 +112,7 @@ pub async fn open_udp_proxy(
                         let len = match res {
                             Ok((len, addr)) => {
                                 info!("received datagram from {}: {:?}", addr, &buf[..len]);
-                                if !is_connected {
-                                    info!("connected to {}", addr);
-                                    socket.connect(addr).await?;
-                                    is_connected = true;
-                                }
+                                client_addr = Some(addr);
                                 len
                             }
                             Err(err) => {
@@ -127,7 +123,15 @@ pub async fn open_udp_proxy(
                         let mut datagram = BytesMut::with_capacity(1 + len);
                         datagram.put_u8(0); // 1 byte for datagram header
                         datagram.put_slice(&buf[..len]);
-                        datagram_sender.send_datagram(datagram.freeze())?;
+                        match datagram_sender.send_datagram(datagram.freeze()) {
+                            Ok(_) => {
+                                info!("sent datagram to stream {}", stream.id());
+                            }
+                            Err(err) => {
+                                error!("failed to send datagram: {:?}", err);
+                                continue;
+                            }
+                        }
                     }
                     datagram = datagrma_reader.read_datagram() => {
                         let datagram = match datagram {
@@ -140,20 +144,14 @@ pub async fn open_udp_proxy(
                         info!("received datagram: {:?}", datagram);
                         let datagram = datagram.into_payload();
                         let (context_id, payload) = decode_var_int(datagram.chunk());
-                        info!("context id: {}, payload: {:?}", context_id, payload);
                         if context_id == 0 {
-                            info!("received datagram with context id 0");
-                            match socket.send(payload).await {
-                                Ok(len) => {
-                                    info!("sent datagram: {:?}", &payload[..len]);
-                                }
-                                Err(err) => {
-                                    error!("failed to send datagram: {:?}", err);
-                                    break;
-                                }
+                            if let Err(err) = socket.send_to(payload, client_addr.as_ref().map(|a| a.clone()).unwrap()).await {
+                                error!("failed to send datagram: {:?}", err);
+                                continue;
                             }
                         } else {
                             info!("received datagram with context id {}", context_id);
+                            break;
                         }
                     }
                 }
