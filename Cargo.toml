@@ -1,0 +1,20 @@
+[package]
+name = "h3_masque"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+anyhow = "1.0.80"
+bytes = "1.5.0"
+h3 = "0.0.8"
+h3-datagram = "0.0.2"
+h3-msquic-async = { path = "../msquic-async-rs/h3-msquic-async", features = ["datagram"] }
+http = "1"
+tokio = { version = "1.45.0", features = ["full"] }
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "ansi", "env-filter", "time", "tracing-log"] }
+
+[dev-dependencies]
