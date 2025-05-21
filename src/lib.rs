@@ -1,4 +1,4 @@
-use bytes::{BufMut, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 use h3::{
     error::{ConnectionError, StreamError},
     ext::Protocol,
@@ -16,6 +16,10 @@ pub async fn open_udp_proxy(
     server_addr: SocketAddr,
     remote_addr: SocketAddr,
 ) -> anyhow::Result<()> {
+    let socket = UdpSocket::bind(local_addr).await?;
+    let local_addr = socket.local_addr()?;
+    info!("local address: {}", local_addr);
+
     let registration = msquic::Registration::new(&msquic::RegistrationConfig::default())?;
 
     let alpn = [msquic::BufferRef::from("h3")];
@@ -24,7 +28,8 @@ pub async fn open_udp_proxy(
         &alpn,
         Some(
             &msquic::Settings::new()
-                .set_IdleTimeoutMs(10000)
+                .set_IdleTimeoutMs(1_000_000_000)
+                .set_SendIdleTimeoutMs(1_000_000_000)
                 .set_PeerBidiStreamCount(100)
                 .set_PeerUnidiStreamCount(100)
                 .set_DatagramReceiveEnabled()
@@ -35,21 +40,20 @@ pub async fn open_udp_proxy(
         .set_credential_flags(msquic::CredentialFlags::NO_CERTIFICATE_VALIDATION);
     configuration.load_credential(&cred_config)?;
 
+    let conn = msquic_async::Connection::new(&registration)?;
+    conn.start(
+        &configuration,
+        &server_addr.ip().to_string(),
+        server_addr.port(),
+    )
+    .await?;
+
     let handle = tokio::spawn(async move {
-        let socket = UdpSocket::bind(local_addr).await?;
-
-        let conn = msquic_async::Connection::new(&registration)?;
-        conn.start(
-            &configuration,
-            &server_addr.ip().to_string(),
-            server_addr.port(),
-        )
-        .await?;
-
         let h3_conn = h3_msquic_async::Connection::new(conn);
 
         let (mut driver, mut send_request) = h3::client::new(h3_conn).await?;
 
+        let mut datagrma_reader = driver.get_datagram_reader();
         let (stream_id_sender, mut stream_id_receiver) = mpsc::channel(1);
         let (datagram_tx_sender, mut datagram_tx_receiver) = mpsc::channel(1);
 
@@ -89,8 +93,6 @@ pub async fn open_udp_proxy(
             let mut stream = send_request.send_request(req).await?;
 
             info!("request sent, stream id: {}", stream.id());
-            // finish on the sending side
-            // stream.finish().await?;
 
             info!("receiving response ...");
 
@@ -100,11 +102,64 @@ pub async fn open_udp_proxy(
             info!("headers: {:#?}", resp.headers());
 
             stream_id_sender.send(stream.id()).await?;
-            if let Some(mut datagram_sender) = datagram_tx_receiver.recv().await {
-                let mut buf = BytesMut::with_capacity(1024);
-                buf.put(&b"\x00hello world"[..]);
-                datagram_sender.send_datagram(buf.freeze())?;
+            let mut datagram_sender = datagram_tx_receiver.recv().await.unwrap();
+
+            let mut is_connected = false;
+            let mut buf = [0; 65535];
+            loop {
+                tokio::select! {
+                    res = socket.recv_from(&mut buf) => {
+                        let len = match res {
+                            Ok((len, addr)) => {
+                                info!("received datagram from {}: {:?}", addr, &buf[..len]);
+                                if !is_connected {
+                                    info!("connected to {}", addr);
+                                    socket.connect(addr).await?;
+                                    is_connected = true;
+                                }
+                                len
+                            }
+                            Err(err) => {
+                                error!("failed to receive datagram: {:?}", err);
+                                break;
+                            }
+                        };
+                        let mut datagram = BytesMut::with_capacity(1 + len);
+                        datagram.put_u8(0); // 1 byte for datagram header
+                        datagram.put_slice(&buf[..len]);
+                        datagram_sender.send_datagram(datagram.freeze())?;
+                    }
+                    datagram = datagrma_reader.read_datagram() => {
+                        let datagram = match datagram {
+                            Ok(datagram) => datagram,
+                            Err(err) => {
+                                error!("failed to receive datagram: {:?}", err);
+                                break;
+                            }
+                        };
+                        info!("received datagram: {:?}", datagram);
+                        let datagram = datagram.into_payload();
+                        let (context_id, payload) = decode_var_int(datagram.chunk());
+                        info!("context id: {}, payload: {:?}", context_id, payload);
+                        if context_id == 0 {
+                            info!("received datagram with context id 0");
+                            match socket.send(payload).await {
+                                Ok(len) => {
+                                    info!("sent datagram: {:?}", &payload[..len]);
+                                }
+                                Err(err) => {
+                                    error!("failed to send datagram: {:?}", err);
+                                    break;
+                                }
+                            }
+                        } else {
+                            info!("received datagram with context id {}", context_id);
+                        }
+                    }
+                }
             }
+
+            stream.finish().await?;
 
             anyhow::Ok(())
         };
@@ -133,6 +188,7 @@ pub async fn open_udp_proxy(
             }
         }
 
+        info!("request finished");
         anyhow::Ok(())
     });
 
@@ -146,4 +202,21 @@ pub async fn open_udp_proxy(
 fn socketaddr_to_connect_udp_path(addr: &SocketAddr) -> String {
     let ip_string = addr.ip().to_string().replace(":", "%3A"); // encode ':' in IPv6 address in URI
     format!("/.well_known/masque/udp/{}/{}/", ip_string, addr.port())
+}
+
+fn decode_var_int(data: &[u8]) -> (u64, &[u8]) {
+    // The length of variable-length integers is encoded in the
+    // first two bits of the first byte.
+    let mut v: u64 = data[0].into();
+    let prefix = v >> 6;
+    let length = 1 << prefix;
+
+    // Once the length is known, remove these bits and read any
+    // remaining bytes.
+    v = v & 0x3f;
+    for i in 1..length - 1 {
+        v = (v << 8) + Into::<u64>::into(data[i]);
+    }
+
+    (v, &data[length..])
 }
