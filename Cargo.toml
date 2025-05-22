@@ -6,6 +6,9 @@ edition = "2024"
 [lib]
 crate-type = ["lib"]
 
+[features]
+quictls = []
+
 [dependencies]
 anyhow = "1.0.80"
 bytes = "1.5.0"
@@ -13,8 +16,10 @@ h3 = "0.0.8"
 h3-datagram = "0.0.2"
 h3-msquic-async = { path = "../msquic-async-rs/h3-msquic-async", features = ["datagram"] }
 http = "1"
+schannel = "0.1.27"
 tokio = { version = "1.45.0", features = ["full"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "ansi", "env-filter", "time", "tracing-log"] }
+url = "1"
 
 [dev-dependencies]
