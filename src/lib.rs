@@ -1,15 +1,10 @@
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 use h3::{
     error::{ConnectionError, StreamError},
     ext::Protocol,
     proto::stream::StreamId,
-    quic::{self, BidiStream},
-    server::RequestStream,
 };
-use h3_datagram::{
-    datagram_handler::{DatagramReader, DatagramSender, HandleDatagramsExt},
-    quic_traits,
-};
+use h3_datagram::datagram_handler::HandleDatagramsExt;
 use h3_msquic_async::{msquic, msquic_async};
 use std::collections::HashMap;
 use std::future::poll_fn;
@@ -350,7 +345,7 @@ pub async fn open_udp_proxy_server(server_addr: SocketAddr) -> anyhow::Result<()
 
                         let mut datagram_sender = h3_conn.get_datagram_sender(stream.id());
                         let sessions_clone = sessions.clone();
-                        tokio::spawn(async move{
+                        tokio::spawn(async move {
                             let (resp, socket) = if validate_connect_udp(&req) {
                                 match path_to_socketaddr(req.uri().path().as_bytes()) {
                                     Some(addr) => {
@@ -429,7 +424,6 @@ pub async fn open_udp_proxy_server(server_addr: SocketAddr) -> anyhow::Result<()
     }
     Ok(())
 }
-
 
 /**
  * RFC9298 specify connect-udp path should be a template like /.well-known/masque/udp/192.0.2.6/443/
