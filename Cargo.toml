@@ -21,5 +21,7 @@ tokio = { version = "1.45.0", features = ["full"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "ansi", "env-filter", "time", "tracing-log"] }
 url = "1"
-
+futures = "0.3"
+futures-concurrency = "7.6.3"
+tempfile = "3.13.0"
 [dev-dependencies]
