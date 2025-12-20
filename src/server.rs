@@ -14,9 +14,10 @@ use tokio::net::UdpSocket;
 use tokio::task::JoinHandle;
 use tracing::{error, info};
 
-pub async fn serve_udp_proxy(server_addr: SocketAddr) -> anyhow::Result<()> {
-    let registration = msquic::Registration::new(&msquic::RegistrationConfig::default())?;
-
+pub async fn serve_udp_proxy(
+    registration: &msquic::Registration,
+    server_addr: SocketAddr,
+) -> anyhow::Result<()> {
     let alpn = [msquic::BufferRef::from("h3")];
 
     // create msquic-async listener
@@ -252,9 +253,10 @@ struct ContextInfo {
     compressions: HashMap<SocketAddr, u64>,
 }
 
-pub async fn serve_udp_bind_proxy(server_addr: SocketAddr) -> anyhow::Result<()> {
-    let registration = msquic::Registration::new(&msquic::RegistrationConfig::default())?;
-
+pub async fn serve_udp_bind_proxy(
+    registration: &msquic::Registration,
+    server_addr: SocketAddr,
+) -> anyhow::Result<()> {
     let alpn = [msquic::BufferRef::from("h3")];
 
     // create msquic-async listener

@@ -1,3 +1,4 @@
+use h3_msquic_async::msquic;
 use std::net::SocketAddr;
 use tracing::info;
 
@@ -12,7 +13,9 @@ async fn main() -> anyhow::Result<()> {
 
     let server_addr: SocketAddr = "127.0.0.1:4443".parse()?;
 
-    h3_masque::server::serve_udp_bind_proxy(server_addr).await?;
+    let registration = msquic::Registration::new(&msquic::RegistrationConfig::default())?;
+
+    h3_masque::server::serve_udp_bind_proxy(&registration, server_addr).await?;
     info!("UDP proxy finished");
     Ok(())
 }

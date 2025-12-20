@@ -19,6 +19,7 @@ use tokio::sync::mpsc;
 use tracing::{error, info};
 
 pub async fn connect_udp_proxy(
+    registration: &msquic::Registration,
     local_addr: SocketAddr,
     server_addr: SocketAddr,
     remote_addr: SocketAddr,
@@ -26,8 +27,6 @@ pub async fn connect_udp_proxy(
     let socket = UdpSocket::bind(local_addr).await?;
     let local_addr = socket.local_addr()?;
     info!("local address: {}", local_addr);
-
-    let registration = msquic::Registration::new(&msquic::RegistrationConfig::default())?;
 
     let alpn = [msquic::BufferRef::from("h3")];
     let configuration = msquic::Configuration::open(
@@ -225,11 +224,11 @@ struct ClientContextInfo {
 }
 
 pub async fn connect_udp_bind_proxy(
+    registration: &msquic::Registration,
     local_bind_addr: SocketAddr,
     server_addr: SocketAddr,
     target_addr: Option<SocketAddr>,
 ) -> anyhow::Result<()> {
-    let registration = msquic::Registration::new(&msquic::RegistrationConfig::default())?;
     let alpn = [msquic::BufferRef::from("h3")];
     let configuration = msquic::Configuration::open(
         &registration,
