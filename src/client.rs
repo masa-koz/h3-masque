@@ -258,7 +258,7 @@ pub async fn connect_udp_bind_proxy(
     let handle = tokio::spawn(async move {
         let h3_conn = h3_msquic_async::Connection::new(conn);
 
-        let mut context_id = 2u64; // start from 2, as 0 is normal udp connect
+        let context_id = 2u64; // start from 2, as 0 is normal udp connect
         let (mut driver, mut send_request) = h3::client::new(h3_conn).await?;
 
         let datagram_reader = driver.get_datagram_reader();
@@ -322,7 +322,7 @@ pub async fn connect_udp_bind_proxy(
             req_buf.put_u8(0); // IP version 0 (no address)
             stream.send_data(req_buf.freeze()).await.unwrap();
 
-            let (resp_capsule_type, resp_context_id, resp_buf) =
+            let (resp_capsule_type, resp_context_id, _resp_buf) =
                 recv_capsule_response(&mut stream, BytesMut::new()).await?;
             if resp_capsule_type != 0x12 {
                 bail!(
@@ -532,7 +532,7 @@ pub async fn connect_udp_bind_proxy(
                     }
                 }
             }
-
+            #[allow(unreachable_code)]
             stream.finish().await?;
 
             anyhow::Ok(())
@@ -596,7 +596,7 @@ where
                 match capsule_type {
                     0x12 | 0x13 => {
                         // COMPRESSION_ASSIGN_ACK / COMPRESSION_CLOSE capsule
-                        let Some((context_id, payload)) = crate::decode_var_int(payload) else {
+                        let Some((context_id, _payload)) = crate::decode_var_int(payload) else {
                             bail!("invalid COMPRESSION_ASSIGN ACK capsule");
                         };
                         buf.advance(length as usize);
