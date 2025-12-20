@@ -14,7 +14,7 @@ async fn main() -> anyhow::Result<()> {
     let server_addr: SocketAddr = "127.0.0.1:4443".parse()?;
     let target_addr: Option<SocketAddr> = None;
 
-    h3_masque::open_udp_bind_proxy(local_bind_addr, server_addr, target_addr).await?;
+    h3_masque::client::connect_udp_bind_proxy(local_bind_addr, server_addr, target_addr).await?;
     info!("UDP proxy finished");
     Ok(())
 }
