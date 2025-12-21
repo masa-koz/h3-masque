@@ -14,7 +14,7 @@ anyhow = "1.0.80"
 bytes = "1.5.0"
 h3 = "0.0.8"
 h3-datagram = "0.0.2"
-h3-msquic-async = { version = "0.2.0", features = ["datagram"] }
+h3-msquic-async = { git = "https://github.com/masa-koz/msquic-async-rs.git", branch = "masa-koz/address-discovery", features = ["datagram"] }
 http = "1"
 schannel = "0.1.27"
 tokio = { version = "1.45.0", features = ["full"] }
