@@ -146,10 +146,17 @@ async fn main() -> anyhow::Result<()> {
 
     info!("listening on {}", server_addr);
 
+    let Some((local_address, observed_address)) = observed_receiver.recv().await else {
+        error!("did not receive observed address");
+        return Ok(());
+    };
     // handle incoming connections and streams
     while let Ok(conn) = listener.accept().await {
         info!("new connection established");
+        let local_address = local_address.clone();
+        let observed_address = observed_address.clone();
         tokio::spawn(async move {
+            conn.add_local_addr(local_address, observed_address)?;
             loop {
                 match conn.accept_inbound_stream().await {
                     Ok(mut stream) => {
