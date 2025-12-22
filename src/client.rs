@@ -249,6 +249,7 @@ pub async fn connect_udp_bind_proxy(
         Some(
             &msquic::Settings::new()
                 .set_IdleTimeoutMs(100_000)
+                .set_KeepAliveIntervalMs(1000)
                 .set_PeerBidiStreamCount(100)
                 .set_PeerUnidiStreamCount(100)
                 .set_DatagramReceiveEnabled()
@@ -260,6 +261,7 @@ pub async fn connect_udp_bind_proxy(
     configuration.load_credential(&cred_config)?;
 
     let conn = msquic_async::Connection::new(&registration)?;
+    conn.set_share_binding(true)?;
     conn.start(
         &configuration,
         &server_addr.ip().to_string(),
@@ -430,7 +432,7 @@ pub async fn connect_udp_bind_proxy(
             loop {
                 tokio::select! {
                     Some(Event::UdpRecv(data, remote_addr)) = udp_recv_group.next() => {
-                        info!("received datagram to {}: {:?}", remote_addr, data);
+                        info!("received datagram to {}", remote_addr);
                         let (context_id, compressed) =
                             if let Some(id) = context_info.addr_to_id_map.get(&remote_addr) {
                                 (*id, true)
@@ -469,7 +471,7 @@ pub async fn connect_udp_bind_proxy(
                         }
                     }
                     Some(Event::DatagramRecv(datagram)) = datagram_read.next() => {
-                        info!("received datagram: {:?}", datagram);
+                        info!("received datagram");
                         let datagram = datagram.into_payload();
                         if let Some((context_id, mut payload)) = crate::decode_var_int(datagram.chunk()) {
                             let remote_addr = match context_info.id_to_addr_map.get(&context_id) {

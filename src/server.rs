@@ -266,6 +266,7 @@ pub async fn serve_udp_bind_proxy(
         Some(
             &msquic::Settings::new()
                 .set_IdleTimeoutMs(100_000)
+                .set_KeepAliveIntervalMs(1000)
                 .set_PeerBidiStreamCount(100)
                 .set_PeerUnidiStreamCount(100)
                 .set_DatagramReceiveEnabled()
