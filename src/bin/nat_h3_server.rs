@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{future::poll_fn, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use argh::FromArgs;
 use bytes::{Bytes, BytesMut};
@@ -174,10 +174,45 @@ async fn main() -> anyhow::Result<()> {
         let local_address = local_address.clone();
         let observed_address = observed_address.clone();
         conn.add_local_addr(local_address.clone(), observed_address)?;
+        info!(
+            "added local address {} with observed address {}",
+            local_address, observed_address
+        );
+        let event_handle = {
+            let conn = conn.clone();
+            tokio::spawn(async move {
+                while let Ok(event) = poll_fn(|cx| conn.poll_event(cx)).await {
+                    match event {
+                        msquic_async::ConnectionEvent::NotifyObservedAddress {
+                            local_address,
+                            observed_address,
+                        } => {
+                            info!(
+                                "local address: {}, observed address: {}",
+                                local_address, observed_address
+                            );
+                            conn.add_local_addr(local_address.clone(), local_address)?;
+                        }
+                        msquic_async::ConnectionEvent::NotifyRemoteAddressAdded {
+                            address,
+                            sequence_number,
+                        } => {
+                            info!(
+                                "remote address: {}, sequence number: {}",
+                                address, sequence_number
+                            );
+                            conn.create_path(local_address.clone(), address.clone())?;
+                            conn.activate_path(local_address.clone(), address)?;
+                        }
+                    }
+                }
+                anyhow::Ok(())
+            })
+        };
         let root = root.clone();
         tokio::spawn(async move {
             let mut h3_conn =
-                h3::server::Connection::new(h3_msquic_async::Connection::new(conn.clone())).await?;
+                h3::server::Connection::new(h3_msquic_async::Connection::new(conn)).await?;
             loop {
                 match h3_conn.accept().await {
                     Ok(Some(req_resolver)) => {
@@ -190,12 +225,10 @@ async fn main() -> anyhow::Result<()> {
                         };
                         info!("new request: {:#?}", req);
 
-                        let conn = conn.clone();
-                        let local_addr = local_address.clone();
                         let root = root.clone();
 
                         tokio::spawn(async move {
-                            if let Err(e) = handle_request(req, stream, root, conn, local_addr).await {
+                            if let Err(e) = handle_request(req, stream, root).await {
                                 error!("handling request failed: {}", e);
                             }
                         });
@@ -212,7 +245,8 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
             }
-            Ok::<_, anyhow::Error>(())
+            event_handle.await??;
+            anyhow::Ok(())
         });
     }
 
@@ -223,19 +257,10 @@ async fn handle_request<T>(
     req: Request<()>,
     mut stream: RequestStream<T, Bytes>,
     serve_root: Arc<Option<PathBuf>>,
-    conn: msquic_async::Connection,
-    local_addr: SocketAddr,
 ) -> anyhow::Result<()>
 where
     T: BidiStream<Bytes>,
 {
-    if let Some(advertise_address) = req.headers().get("x-advertise-address") {
-        let advertise_address = advertise_address.to_str().unwrap_or_default();
-        info!("Received advertise address request: {}", advertise_address);
-        let advertise_addr: SocketAddr = advertise_address.parse()?;
-        conn.create_path(local_addr.clone(), advertise_addr.clone())?;
-        conn.activate_path(local_addr, advertise_addr)?;
-    }
     let (status, to_serve) = match serve_root.as_deref() {
         None => (StatusCode::OK, None),
         Some(_) if req.uri().path().contains("..") => (StatusCode::NOT_FOUND, None),
