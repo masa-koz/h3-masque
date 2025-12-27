@@ -261,6 +261,7 @@ pub async fn connect_udp_bind_proxy(
     configuration.load_credential(&cred_config)?;
 
     let conn = msquic_async::Connection::new(&registration)?;
+    conn.set_share_binding(true)?;
     conn.start(
         &configuration,
         &server_addr.ip().to_string(),

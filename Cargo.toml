@@ -11,6 +11,7 @@ quictls = []
 
 [dependencies]
 anyhow = "1.0.80"
+argh = "0.1.10"
 bytes = "1.5.0"
 h3 = "0.0.8"
 h3-datagram = "0.0.2"
