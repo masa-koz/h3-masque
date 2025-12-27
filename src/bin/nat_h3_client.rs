@@ -6,6 +6,7 @@ use h3_msquic_async::msquic;
 use h3_msquic_async::msquic_async;
 use std::env;
 use std::fs::OpenOptions;
+use std::future::poll_fn;
 use tokio::io::AsyncWriteExt;
 use tracing::{error, info};
 
@@ -68,6 +69,23 @@ async fn main() -> anyhow::Result<()> {
     let local_addr = conn.get_local_addr()?;
     info!("connected from {} to {}", local_addr, target);
 
+    let event_handle = {
+        let conn = conn.clone();
+        tokio::task::spawn(async move {
+            while let Ok(event) = poll_fn(|cx| conn.poll_event(cx)).await {
+                match event {
+                    msquic_async::ConnectionEvent::NotifyObservedAddress { local_address, observed_address } => {
+                        info!("local address: {}, observed address: {}", local_address, observed_address);
+                        conn.add_local_addr(local_address, observed_address)?;
+                    }
+                    msquic_async::ConnectionEvent::NotifyRemoteAddressAdded { address, sequence_number } => {
+                        info!("remote address: {}, sequence number: {}", address, sequence_number);
+                    }
+                }
+            }
+            anyhow::Ok(())
+        })
+    };
     let h3_conn = h3_msquic_async::Connection::new(conn);
     let (mut driver, mut send_request) = h3::client::new(h3_conn).await?;
 
@@ -133,5 +151,6 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    event_handle.await??;
     Ok(())
 }

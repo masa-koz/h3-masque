@@ -291,6 +291,12 @@ pub async fn connect_udp_bind_proxy(
                             error!("failed to send NotifyObservedAddress event: {:?}", err);
                         }
                     }
+                    msquic_async::ConnectionEvent::NotifyRemoteAddressAdded {
+                        address,
+                        sequence_number,
+                    } => {
+                        info!("remote address added address: {}, sequence number: {}", address, sequence_number);
+                    }
                 }
             }
         })
