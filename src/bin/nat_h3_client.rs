@@ -36,6 +36,7 @@ async fn main() -> anyhow::Result<()> {
         Some(
             &msquic::Settings::new()
                 .set_IdleTimeoutMs(10000)
+                .set_KeepAliveIntervalMs(1000)
                 .set_PeerBidiStreamCount(100)
                 .set_PeerUnidiStreamCount(100)
                 .set_DatagramReceiveEnabled()
@@ -102,6 +103,8 @@ async fn main() -> anyhow::Result<()> {
             out.write_all_buf(&mut chunk).await?;
             out.flush().await?;
         }
+
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
 
         Ok::<_, anyhow::Error>(())
     };

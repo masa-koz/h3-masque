@@ -75,6 +75,7 @@ async fn main() -> anyhow::Result<()> {
         Some(
             &msquic::Settings::new()
                 .set_IdleTimeoutMs(10000)
+                .set_KeepAliveIntervalMs(1000)
                 .set_PeerBidiStreamCount(100)
                 .set_PeerUnidiStreamCount(100)
                 .set_DatagramReceiveEnabled()
@@ -232,7 +233,8 @@ where
         let advertise_address = advertise_address.to_str().unwrap_or_default();
         info!("Received advertise address request: {}", advertise_address);
         let advertise_addr: SocketAddr = advertise_address.parse()?;
-        conn.create_path(local_addr, advertise_addr)?;
+        conn.create_path(local_addr.clone(), advertise_addr.clone())?;
+        conn.activate_path(local_addr, advertise_addr)?;
     }
     let (status, to_serve) = match serve_root.as_deref() {
         None => (StatusCode::OK, None),
