@@ -80,7 +80,8 @@ async fn main() -> anyhow::Result<()> {
                 .set_PeerUnidiStreamCount(100)
                 .set_DatagramReceiveEnabled()
                 .set_StreamMultiReceiveEnabled()
-                .set_ServerMigrationEnabled(),
+                .set_ServerMigrationEnabled()
+                .set_AddAddressMode(msquic::AddAddressMode::Auto),
         ),
     )?;
 
@@ -201,9 +202,19 @@ async fn main() -> anyhow::Result<()> {
                                 "remote address: {}, sequence number: {}",
                                 address, sequence_number
                             );
-                            conn.create_path(local_address.clone(), address.clone())?;
-                            conn.activate_path(local_address.clone(), address)?;
+                            // conn.create_path(local_address.clone(), address.clone())?;
                         }
+                        msquic_async::ConnectionEvent::PathValidated {
+                            local_address,
+                            remote_address,
+                        } => {
+                            info!(
+                                "path validated local address: {}, remote address: {}",
+                                local_address, remote_address
+                            );
+                            // conn.activate_path(local_address.clone(), remote_address)?;
+                        }
+
                     }
                 }
                 anyhow::Ok(())

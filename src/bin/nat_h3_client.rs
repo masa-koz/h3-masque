@@ -81,6 +81,9 @@ async fn main() -> anyhow::Result<()> {
                     msquic_async::ConnectionEvent::NotifyRemoteAddressAdded { address, sequence_number } => {
                         info!("remote address: {}, sequence number: {}", address, sequence_number);
                     }
+                    msquic_async::ConnectionEvent::PathValidated { local_address, remote_address } => {
+                        info!("path validated local address: {}, remote address: {}", local_address, remote_address);
+                    }
                 }
             }
             anyhow::Ok(())

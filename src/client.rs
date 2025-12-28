@@ -297,6 +297,12 @@ pub async fn connect_udp_bind_proxy(
                     } => {
                         info!("remote address added address: {}, sequence number: {}", address, sequence_number);
                     }
+                    msquic_async::ConnectionEvent::PathValidated {
+                        local_address,
+                        remote_address,
+                    } => {
+                        info!("path validated local address: {}, remote address: {}", local_address, remote_address);
+                    }
                 }
             }
         })
