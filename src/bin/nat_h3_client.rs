@@ -79,10 +79,13 @@ async fn main() -> anyhow::Result<()> {
                         conn.add_local_addr(local_address.clone(), local_address)?;
                     }
                     msquic_async::ConnectionEvent::NotifyRemoteAddressAdded { address, sequence_number } => {
-                        info!("remote address: {}, sequence number: {}", address, sequence_number);
+                        info!("Added remote address: {}, sequence number: {}", address, sequence_number);
                     }
                     msquic_async::ConnectionEvent::PathValidated { local_address, remote_address } => {
                         info!("path validated local address: {}, remote address: {}", local_address, remote_address);
+                    }
+                    msquic_async::ConnectionEvent::NotifyRemoteAddressRemoved { sequence_number } => {
+                        info!("Removed remote address with sequence number: {}", sequence_number);
                     }
                 }
             }

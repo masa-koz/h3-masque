@@ -285,7 +285,7 @@ pub async fn connect_udp_bind_proxy(
                             .send(BoundProxyEvent::NotifyObservedAddress {
                                 local_address,
                                 observed_address,
-                            })  
+                            })
                             .await
                         {
                             error!("failed to send NotifyObservedAddress event: {:?}", err);
@@ -295,13 +295,27 @@ pub async fn connect_udp_bind_proxy(
                         address,
                         sequence_number,
                     } => {
-                        info!("remote address added address: {}, sequence number: {}", address, sequence_number);
+                        info!(
+                            "remote address added address: {}, sequence number: {}",
+                            address, sequence_number
+                        );
                     }
                     msquic_async::ConnectionEvent::PathValidated {
                         local_address,
                         remote_address,
                     } => {
-                        info!("path validated local address: {}, remote address: {}", local_address, remote_address);
+                        info!(
+                            "path validated local address: {}, remote address: {}",
+                            local_address, remote_address
+                        );
+                    }
+                    msquic_async::ConnectionEvent::NotifyRemoteAddressRemoved {
+                        sequence_number,
+                    } => {
+                        info!(
+                            "remote address removed with sequence number: {}",
+                            sequence_number
+                        );
                     }
                 }
             }
