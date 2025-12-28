@@ -212,7 +212,9 @@ async fn main() -> anyhow::Result<()> {
                                 "path validated local address: {}, remote address: {}",
                                 local_address, remote_address
                             );
-                            // conn.activate_path(local_address.clone(), remote_address)?;
+                            if !local_address.ip().is_loopback() {
+                                conn.activate_path(local_address, remote_address)?;
+                            }
                         }
 
                     }
