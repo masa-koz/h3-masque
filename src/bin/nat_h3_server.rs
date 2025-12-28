@@ -216,7 +216,14 @@ async fn main() -> anyhow::Result<()> {
                                 conn.activate_path(local_address, remote_address)?;
                             }
                         }
-
+                        msquic_async::ConnectionEvent::NotifyRemoteAddressRemoved {
+                            sequence_number,
+                        } => {
+                            info!(
+                                "remote address removed with sequence number: {}",
+                                sequence_number
+                            );
+                        }
                     }
                 }
                 anyhow::Ok(())
