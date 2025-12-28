@@ -80,8 +80,8 @@ async fn main() -> anyhow::Result<()> {
                 .set_PeerUnidiStreamCount(100)
                 .set_DatagramReceiveEnabled()
                 .set_StreamMultiReceiveEnabled()
-                .set_ServerMigrationEnabled()
-                .set_AddAddressMode(msquic::AddAddressMode::Auto),
+                .set_ServerMigrationEnabled(),
+                // .set_AddAddressMode(msquic::AddAddressMode::Manual),
         ),
     )?;
 
@@ -175,13 +175,14 @@ async fn main() -> anyhow::Result<()> {
         let local_address = local_address.clone();
         let observed_address = observed_address.clone();
         let unspecified_address = "0.0.0.0:0".parse::<SocketAddr>()?;
-        conn.add_local_addr(unspecified_address.clone(), unspecified_address)?;
+        conn.add_local_addr(unspecified_address.clone(), unspecified_address.clone())?;
         info!(
             "added local address {} with observed address {}",
             local_address, observed_address
         );
         let event_handle = {
             let conn = conn.clone();
+            // let mut new_remote_address = None;
             tokio::spawn(async move {
                 while let Ok(event) = poll_fn(|cx| conn.poll_event(cx)).await {
                     match event {
@@ -203,7 +204,7 @@ async fn main() -> anyhow::Result<()> {
                                 "remote address: {}, sequence number: {}",
                                 address, sequence_number
                             );
-                            // conn.create_path(local_address.clone(), address.clone())?;
+                            // conn.create_path(unspecified_address.clone(), address.clone())?;
                         }
                         msquic_async::ConnectionEvent::PathValidated {
                             local_address,
@@ -214,7 +215,8 @@ async fn main() -> anyhow::Result<()> {
                                 local_address, remote_address
                             );
                             if !local_address.ip().is_loopback() {
-                                conn.activate_path(local_address, remote_address)?;
+                                conn.activate_path(local_address, remote_address.clone())?;
+                                // new_remote_address = Some(remote_address);
                             }
                         }
                         msquic_async::ConnectionEvent::NotifyRemoteAddressRemoved {
@@ -224,6 +226,9 @@ async fn main() -> anyhow::Result<()> {
                                 "remote address removed with sequence number: {}",
                                 sequence_number
                             );
+                            // if let Some(addr) = &new_remote_address {
+                            //     conn.remove_remote_addr(addr.clone())?;
+                            // }
                         }
                     }
                 }

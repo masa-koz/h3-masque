@@ -72,26 +72,27 @@ async fn main() -> anyhow::Result<()> {
     let event_handle = {
         let conn = conn.clone();
         tokio::task::spawn(async move {
-            let mut added_local_address = None;
+            // let mut added_local_address = None;
             while let Ok(event) = poll_fn(|cx| conn.poll_event(cx)).await {
                 match event {
                     msquic_async::ConnectionEvent::NotifyObservedAddress { local_address, observed_address } => {
                         info!("local address: {}, observed address: {}", local_address, observed_address);
-                        let mut new_local_address = local_address.clone();
-                        new_local_address.set_port(local_address.port() + 1);
-                        conn.add_local_addr(new_local_address.clone(), new_local_address.clone())?;
-                        added_local_address = Some(new_local_address);
+                        // let mut new_local_address = local_address.clone();
+                        // new_local_address.set_port(local_address.port() + 1);
+                        conn.add_local_addr(local_address.clone(), local_address.clone())?;
+                        // conn.add_local_addr(new_local_address.clone(), new_local_address.clone())?;
+                        // added_local_address = Some(new_local_address);
                     }
                     msquic_async::ConnectionEvent::NotifyRemoteAddressAdded { address, sequence_number } => {
                         info!("Added remote address: {}, sequence number: {}", address, sequence_number);
                     }
                     msquic_async::ConnectionEvent::PathValidated { local_address, remote_address } => {
                         info!("path validated local address: {}, remote address: {}", local_address, remote_address);
-                        if let Some(added_local_address) = &added_local_address {
-                            if &local_address == added_local_address {
-                                conn.remove_local_addr(local_address)?;
-                            }
-                        }
+                        // if let Some(added_local_address) = &added_local_address {
+                        //     if &local_address == added_local_address {
+                        //         conn.remove_local_addr(local_address)?;
+                        //     }
+                        // }
                     }
                     msquic_async::ConnectionEvent::NotifyRemoteAddressRemoved { sequence_number } => {
                         info!("Removed remote address with sequence number: {}", sequence_number);
