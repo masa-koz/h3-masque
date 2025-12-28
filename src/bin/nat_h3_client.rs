@@ -76,7 +76,9 @@ async fn main() -> anyhow::Result<()> {
                 match event {
                     msquic_async::ConnectionEvent::NotifyObservedAddress { local_address, observed_address } => {
                         info!("local address: {}, observed address: {}", local_address, observed_address);
-                        conn.add_local_addr(local_address.clone(), local_address)?;
+                        let mut new_local_address = local_address.clone();
+                        new_local_address.set_port(local_address.port() + 1);
+                        conn.add_local_addr(new_local_address.clone(), new_local_address)?;
                     }
                     msquic_async::ConnectionEvent::NotifyRemoteAddressAdded { address, sequence_number } => {
                         info!("Added remote address: {}, sequence number: {}", address, sequence_number);
