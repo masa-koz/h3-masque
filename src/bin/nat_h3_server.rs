@@ -174,7 +174,8 @@ async fn main() -> anyhow::Result<()> {
         info!("new connection established");
         let local_address = local_address.clone();
         let observed_address = observed_address.clone();
-        conn.add_local_addr(local_address.clone(), observed_address)?;
+        let unspecified_address = "0.0.0.0:0".parse::<SocketAddr>()?;
+        conn.add_local_addr(unspecified_address.clone(), unspecified_address)?;
         info!(
             "added local address {} with observed address {}",
             local_address, observed_address
@@ -192,7 +193,7 @@ async fn main() -> anyhow::Result<()> {
                                 "local address: {}, observed address: {}",
                                 local_address, observed_address
                             );
-                            conn.add_local_addr(local_address.clone(), local_address)?;
+                            // conn.add_local_addr(local_address.clone(), local_address)?;
                         }
                         msquic_async::ConnectionEvent::NotifyRemoteAddressAdded {
                             address,
