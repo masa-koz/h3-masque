@@ -363,20 +363,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "h3-msquic-async"
-version = "0.2.0"
-dependencies = [
- "bytes",
- "futures",
- "h3",
- "h3-datagram",
- "msquic-async",
- "tokio",
- "tokio-util",
-]
-
-[[package]]
-name = "h3_masque"
+name = "h3-masque"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -394,6 +381,19 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+]
+
+[[package]]
+name = "h3-msquic-async"
+version = "0.2.0"
+dependencies = [
+ "bytes",
+ "futures",
+ "h3",
+ "h3-datagram",
+ "msquic-async",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
