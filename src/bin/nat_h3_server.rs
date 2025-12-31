@@ -175,7 +175,7 @@ async fn main() -> anyhow::Result<()> {
         let local_address = local_address.clone();
         let observed_address = observed_address.clone();
         let unspecified_address = "0.0.0.0:0".parse::<SocketAddr>()?;
-        conn.add_local_addr(unspecified_address.clone(), unspecified_address.clone())?;
+        conn.add_local_addr(unspecified_address.clone())?;
         info!(
             "added local address {} with observed address {}",
             local_address, observed_address

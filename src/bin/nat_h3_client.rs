@@ -79,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
                         info!("local address: {}, observed address: {}", local_address, observed_address);
                         // let mut new_local_address = local_address.clone();
                         // new_local_address.set_port(local_address.port() + 1);
-                        conn.add_local_addr(local_address.clone(), local_address.clone())?;
+                        conn.add_observed_addr(local_address.clone(), local_address.clone())?;
                         // conn.add_local_addr(new_local_address.clone(), new_local_address.clone())?;
                         // added_local_address = Some(new_local_address);
                     }
