@@ -156,7 +156,8 @@ async fn main() -> anyhow::Result<()> {
         let local_address = local_address.clone();
         let observed_address = observed_address.clone();
         tokio::spawn(async move {
-            conn.add_local_addr(local_address, observed_address)?;
+            conn.add_local_addr(local_address.clone())?;
+            conn.add_observed_addr(local_address, observed_address)?;
             loop {
                 match conn.accept_inbound_stream().await {
                     Ok(mut stream) => {
