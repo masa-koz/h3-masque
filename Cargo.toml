@@ -18,6 +18,7 @@ h3-datagram = "0.0.2"
 # h3-msquic-async = { git = "https://github.com/masa-koz/msquic-async-rs.git", branch = "masa-koz/address-discovery", features = ["datagram"] }
 h3-msquic-async = { path = "../msquic-async-rs/h3-msquic-async", features = ["datagram"] }
 http = "1"
+rand = "0.8"
 schannel = "0.1.27"
 tokio = { version = "1.45.0", features = ["full"] }
 tracing = "0.1.40"
