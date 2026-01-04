@@ -4,6 +4,7 @@ use futures::future;
 use h3::error::{ConnectionError, StreamError};
 use h3_msquic_async::msquic;
 use h3_msquic_async::msquic_async;
+use rand::Rng;
 use std::env;
 use std::fs::OpenOptions;
 use std::future::poll_fn;
@@ -77,8 +78,17 @@ async fn main() -> anyhow::Result<()> {
                 match event {
                     msquic_async::ConnectionEvent::NotifyObservedAddress { local_address, observed_address } => {
                         info!("local address: {}, observed address: {}", local_address, observed_address);
-                        conn.add_bound_addr(local_address.clone())?;
-                        conn.add_observed_addr(local_address.clone(), local_address.clone())?;
+                        let mut rng = rand::thread_rng();
+                        let bound_addr = loop {
+                            let port = rng.gen_range(1025..=65535);
+                            let mut bound_addr = local_address.clone();
+                            bound_addr.set_port(port);
+                            if conn.add_bound_addr(bound_addr.clone()).is_ok() {
+                                info!("added bound address: {}", bound_addr);
+                                break bound_addr;
+                            }
+                        };
+                        conn.add_observed_addr(bound_addr.clone(), bound_addr)?;
                     }
                     msquic_async::ConnectionEvent::NotifyRemoteAddressAdded { address, sequence_number } => {
                         info!("Added remote address: {}, sequence number: {}", address, sequence_number);
