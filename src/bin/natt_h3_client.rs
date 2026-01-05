@@ -31,19 +31,18 @@ async fn main() -> anyhow::Result<()> {
     let registration = msquic::Registration::new(&msquic::RegistrationConfig::default())?;
 
     let alpn = [msquic::BufferRef::from("h3")];
-    let configuration = msquic::Configuration::open(
-        &registration,
-        &alpn,
-        Some(
-            &msquic::Settings::new()
+    let settings = msquic::Settings::new()
                 .set_IdleTimeoutMs(10000)
                 .set_KeepAliveIntervalMs(1000)
                 .set_PeerBidiStreamCount(100)
                 .set_PeerUnidiStreamCount(100)
                 .set_DatagramReceiveEnabled()
                 .set_StreamMultiReceiveEnabled()
-                .set_AddAddressMode(msquic::AddAddressMode::NatTraversal),
-        ),
+                .set_AddAddressMode(msquic::AddAddressMode::NatTraversal);
+    let configuration = msquic::Configuration::open(
+        &registration,
+        &alpn,
+        Some(&settings),
     )?;
     let cred_config = msquic::CredentialConfig::new_client()
         .set_credential_flags(msquic::CredentialFlags::NO_CERTIFICATE_VALIDATION);
@@ -68,6 +67,7 @@ async fn main() -> anyhow::Result<()> {
 
     let local_addr = conn.get_local_addr()?;
     info!("connected from {} to {}", local_addr, target);
+    conn.add_candidate_addr(local_addr.clone(), local_addr.clone())?;
 
     let event_handle = {
         let conn = conn.clone();
