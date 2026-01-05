@@ -104,6 +104,9 @@ async fn main() -> anyhow::Result<()> {
                             "path validated local address: {}, remote address: {}",
                             local_address, remote_address
                         );
+                        if remote_address != target {
+                            conn.activate_path(local_address, remote_address)?;
+                        }
                     }
                     msquic_async::ConnectionEvent::NotifyRemoteAddressRemoved {
                         sequence_number,
