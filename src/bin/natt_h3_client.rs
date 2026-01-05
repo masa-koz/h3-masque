@@ -4,6 +4,7 @@ use futures::future;
 use h3::error::{ConnectionError, StreamError};
 use h3_msquic_async::msquic;
 use h3_msquic_async::msquic_async;
+use rand::Rng;
 use std::env;
 use std::fs::OpenOptions;
 use std::future::poll_fn;
@@ -32,18 +33,14 @@ async fn main() -> anyhow::Result<()> {
 
     let alpn = [msquic::BufferRef::from("h3")];
     let settings = msquic::Settings::new()
-                .set_IdleTimeoutMs(10000)
-                .set_KeepAliveIntervalMs(1000)
-                .set_PeerBidiStreamCount(100)
-                .set_PeerUnidiStreamCount(100)
-                .set_DatagramReceiveEnabled()
-                .set_StreamMultiReceiveEnabled()
-                .set_AddAddressMode(msquic::AddAddressMode::NatTraversal);
-    let configuration = msquic::Configuration::open(
-        &registration,
-        &alpn,
-        Some(&settings),
-    )?;
+        .set_IdleTimeoutMs(10000)
+        .set_KeepAliveIntervalMs(1000)
+        .set_PeerBidiStreamCount(100)
+        .set_PeerUnidiStreamCount(100)
+        .set_DatagramReceiveEnabled()
+        .set_StreamMultiReceiveEnabled()
+        .set_AddAddressMode(msquic::AddAddressMode::NatTraversal);
+    let configuration = msquic::Configuration::open(&registration, &alpn, Some(&settings))?;
     let cred_config = msquic::CredentialConfig::new_client()
         .set_credential_flags(msquic::CredentialFlags::NO_CERTIFICATE_VALIDATION);
     configuration.load_credential(&cred_config)?;
@@ -59,32 +56,62 @@ async fn main() -> anyhow::Result<()> {
         )?;
     }
     conn.set_share_binding(true)?;
+    let candidate_addr: std::net::SocketAddr = format!(
+        "153.127.33.247:{}",
+        rand::thread_rng().gen_range(1025..65535)
+    )
+    .parse()?;
+    conn.add_candidate_addr(candidate_addr.clone(), candidate_addr)?;
+
     let target = cmd_opts
         .target
         .parse::<std::net::SocketAddr>()
         .map_err(|e| anyhow::anyhow!("failed to parse target address: {}", e))?;
-    conn.start(&configuration, &target.ip().to_string(), target.port()).await?;
+    conn.start(&configuration, &target.ip().to_string(), target.port())
+        .await?;
 
     let local_addr = conn.get_local_addr()?;
     info!("connected from {} to {}", local_addr, target);
-    conn.add_candidate_addr(local_addr.clone(), local_addr.clone())?;
 
     let event_handle = {
         let conn = conn.clone();
         tokio::task::spawn(async move {
             while let Ok(event) = poll_fn(|cx| conn.poll_event(cx)).await {
                 match event {
-                    msquic_async::ConnectionEvent::NotifyObservedAddress { local_address, observed_address } => {
-                        info!("local address: {}, observed address: {}", local_address, observed_address);
+                    msquic_async::ConnectionEvent::NotifyObservedAddress {
+                        local_address,
+                        observed_address,
+                    } => {
+                        info!(
+                            "local address: {}, observed address: {}",
+                            local_address, observed_address
+                        );
                     }
-                    msquic_async::ConnectionEvent::NotifyRemoteAddressAdded { address, sequence_number } => {
-                        info!("Added remote address: {}, sequence number: {}", address, sequence_number);
+                    msquic_async::ConnectionEvent::NotifyRemoteAddressAdded {
+                        address,
+                        sequence_number,
+                    } => {
+                        info!(
+                            "Added remote address: {}, sequence number: {}",
+                            address, sequence_number
+                        );
                     }
-                    msquic_async::ConnectionEvent::PathValidated { local_address, remote_address } => {
-                        info!("path validated local address: {}, remote address: {}", local_address, remote_address);
+                    msquic_async::ConnectionEvent::PathValidated {
+                        local_address,
+                        remote_address,
+                    } => {
+                        info!(
+                            "path validated local address: {}, remote address: {}",
+                            local_address, remote_address
+                        );
                     }
-                    msquic_async::ConnectionEvent::NotifyRemoteAddressRemoved { sequence_number } => {
-                        info!("Removed remote address with sequence number: {}", sequence_number);
+                    msquic_async::ConnectionEvent::NotifyRemoteAddressRemoved {
+                        sequence_number,
+                    } => {
+                        info!(
+                            "Removed remote address with sequence number: {}",
+                            sequence_number
+                        );
                     }
                 }
             }
