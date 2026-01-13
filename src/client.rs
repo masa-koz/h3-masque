@@ -235,6 +235,7 @@ pub enum BoundProxyEvent {
 
 pub async fn connect_udp_bind_proxy(
     registration: &msquic::Registration,
+    config: Option<&msquic::Configuration>,
     local_bind_addr: SocketAddr,
     server_addr: SocketAddr,
     target_addr: Option<SocketAddr>,
@@ -263,7 +264,11 @@ pub async fn connect_udp_bind_proxy(
     let conn = msquic_async::Connection::new(&registration)?;
     conn.set_share_binding(true)?;
     conn.start(
-        &configuration,
+        if config.is_some() {
+            config.unwrap()
+        } else {
+            &configuration
+        },
         &server_addr.ip().to_string(),
         server_addr.port(),
     )
@@ -324,7 +329,7 @@ pub async fn connect_udp_bind_proxy(
     let handle = tokio::spawn(async move {
         let h3_conn = h3_msquic_async::Connection::new(conn);
 
-        let context_id = 2u64; // start from 2, as 0 is normal udp connect
+        let mut current_context_id = 2u64; // start from 2, as 0 is normal udp connect
         let (mut driver, mut send_request) = h3::client::new(h3_conn).await?;
 
         let datagram_reader = driver.get_datagram_reader();
@@ -400,39 +405,15 @@ pub async fn connect_udp_bind_proxy(
                 }
             }
 
-            let mut req_buf = BytesMut::new();
-            let req_length =
-                crate::encode_var_int(0x11).len() + 1 + crate::encode_var_int(context_id).len() + 1;
-            req_buf.extend_from_slice(
-                &crate::encode_var_int(0x11), // COMPRESSION capsule
-            );
-            req_buf.extend_from_slice(&crate::encode_var_int(req_length as u64));
-            req_buf.extend_from_slice(&crate::encode_var_int(context_id));
-            req_buf.put_u8(0); // IP version 0 (no address)
-            stream.send_data(req_buf.freeze()).await.unwrap();
-
-            let (resp_capsule_type, resp_context_id, _resp_buf) =
-                recv_capsule_response(&mut stream, BytesMut::new()).await?;
-            if resp_capsule_type != 0x12 {
-                bail!(
-                    "expected COMPRESSION_ASSIGN_ACK capsule, got {}",
-                    resp_capsule_type
-                );
-            }
-            if resp_context_id != context_id {
-                bail!(
-                    "expected context id {}, got {}",
-                    context_id,
-                    resp_context_id
-                );
-            }
-
+            let mut resp_buf =
+                compression_assign(&mut stream, BytesMut::new(), current_context_id, None).await?;
             let mut context_info = ClientContextInfo {
-                uncompressed_context_id: Some(context_id),
+                uncompressed_context_id: Some(current_context_id),
                 id_to_addr_map: HashMap::new(),
                 addr_to_id_map: HashMap::new(),
             };
-            context_info.id_to_addr_map.insert(context_id, None);
+            context_info.id_to_addr_map.insert(current_context_id, None);
+            current_context_id += 2;
 
             let mut sessions: HashMap<SocketAddr, Arc<UdpSocket>> = HashMap::new();
 
@@ -592,6 +573,11 @@ pub async fn connect_udp_bind_proxy(
                                 socket.connect(local_bind_addr).await?;
                                 sessions.insert(remote_addr.clone(), socket.clone());
 
+                                resp_buf = compression_assign(&mut stream, resp_buf, current_context_id, Some(remote_addr.clone())).await?;
+                                context_info.id_to_addr_map.insert(current_context_id, Some(remote_addr.clone()));
+                                context_info.addr_to_id_map.insert(remote_addr.clone(), current_context_id);
+                                current_context_id += 2;
+
                                 let udp_recv = Box::pin(stream::unfold(
                                     (socket, remote_addr),
                                     |(socket, remote_addr)| async move {
@@ -700,4 +686,73 @@ where
             }
         }
     }
+}
+
+async fn compression_assign<T>(
+    stream: &mut ClientRequestStream<T, Bytes>,
+    resp_buf: BytesMut,
+    context_id: u64,
+    addr: Option<SocketAddr>,
+) -> anyhow::Result<BytesMut>
+where
+    T: BidiStream<Bytes> + 'static + Send,
+{
+    let mut req_buf = BytesMut::new();
+    let iplen = match addr {
+        Some(addr) => match addr.ip() {
+            std::net::IpAddr::V4(_) => {
+                1 + 4 + 2 // 1 byte for IP version, 4 bytes for IPv4, 2 bytes for port
+            }
+            std::net::IpAddr::V6(_) => {
+                1 + 16 + 2 // 1 byte for IP version, 16 bytes for IPv6, 2 bytes for port
+            }
+        },
+        None => {
+            1 // 1 byte for IP version 0 (no address)
+        }
+    };
+
+    let req_length =
+        crate::encode_var_int(0x11).len() + 1 + crate::encode_var_int(context_id).len() + iplen;
+    req_buf.extend_from_slice(
+        &crate::encode_var_int(0x11), // COMPRESSION_ASSIGN capsule
+    );
+    req_buf.extend_from_slice(&crate::encode_var_int(req_length as u64));
+    req_buf.extend_from_slice(&crate::encode_var_int(context_id));
+
+    match addr {
+        Some(addr) => match addr.ip() {
+            std::net::IpAddr::V4(ipv4) => {
+                req_buf.put_u8(4); // IP version 4
+                req_buf.extend_from_slice(&ipv4.octets());
+                req_buf.extend_from_slice(&addr.port().to_be_bytes());
+            }
+            std::net::IpAddr::V6(ipv6) => {
+                req_buf.put_u8(6); // IP version 6
+                req_buf.extend_from_slice(&ipv6.octets());
+                req_buf.extend_from_slice(&addr.port().to_be_bytes());
+            }
+        },
+        None => {
+            req_buf.put_u8(0); // IP version 0 (no address)
+        }
+    }
+    stream.send_data(req_buf.freeze()).await.unwrap();
+
+    let (resp_capsule_type, resp_context_id, resp_buf) =
+        recv_capsule_response(stream, resp_buf).await?;
+    if resp_capsule_type != 0x12 {
+        bail!(
+            "expected COMPRESSION_ASSIGN_ACK capsule, got {}",
+            resp_capsule_type
+        );
+    }
+    if resp_context_id != context_id {
+        bail!(
+            "expected context id {}, got {}",
+            context_id,
+            resp_context_id
+        );
+    }
+    Ok(resp_buf)
 }

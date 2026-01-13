@@ -37,6 +37,7 @@ async fn main() -> anyhow::Result<()> {
 
     let (_handle, mut event_receiver) = h3_masque::client::connect_udp_bind_proxy(
         &registration,
+        None,
         local_bind_addr,
         server_addr,
         target_addr,
