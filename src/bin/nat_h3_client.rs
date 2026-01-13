@@ -80,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
                         info!("local address: {}, observed address: {}", local_address, observed_address);
                         let mut rng = rand::thread_rng();
                         let bound_addr = loop {
-                            let port = rng.gen_range(1025..=65535);
+                            let port = rng.gen_range(32768..=65535);
                             let mut bound_addr = local_address.clone();
                             bound_addr.set_port(port);
                             if conn.add_bound_addr(bound_addr.clone()).is_ok() {
