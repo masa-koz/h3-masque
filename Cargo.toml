@@ -1,31 +1,43 @@
 [package]
 name = "h3-masque"
 version = "0.1.0"
+authors = ["Masahiro Kozuka <masa.koz@outlook.com>"]
 edition = "2024"
+description = "An implementation of the CONNECT-UDP protocol, based on h3 and MsQuic"
+readme = "README.md"
+keywords = ["quic", "masque", "proxy"]
+categories = ["network-programming"]
+repository = "https://github.com/masa-koz/h3-masque"
+license = "MIT"
+include = [
+    "/*.md",
+    "/*.toml",
+    "/LICENSE",
+    "/src",
+]
 
 [lib]
 crate-type = ["lib"]
 
 [features]
-quictls = []
 
 [dependencies]
 anyhow = "1.0.80"
 argh = "0.1.10"
 async-trait = "0.1.89"
 bytes = "1.5.0"
+futures = "0.3"
+futures-concurrency = "7.6.3"
 h3 = "0.0.8"
 h3-datagram = "0.0.2"
 h3-msquic-async = { version = "0.3.1", default-features = false, features = ["msquic-seera", "datagram"] }
 http = "1"
 rand = "0.8"
 schannel = "0.1.27"
+tempfile = "3.13.0"
 tokio = { version = "1.45.0", features = ["full"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "ansi", "env-filter", "time", "tracing-log"] }
 url = "1"
-futures = "0.3"
-futures-concurrency = "7.6.3"
-tempfile = "3.13.0"
 
 [dev-dependencies]
