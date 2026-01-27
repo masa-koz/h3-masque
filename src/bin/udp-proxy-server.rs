@@ -24,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
         .with_max_level(tracing::Level::DEBUG)
         .init();
 
-    let server_addr: SocketAddr = "127.0.0.1:4443".parse()?;
+    let server_addr: SocketAddr = "0.0.0.0:4443".parse()?;
 
     let registration = msquic::Registration::new(&msquic::RegistrationConfig::default())?;
 
