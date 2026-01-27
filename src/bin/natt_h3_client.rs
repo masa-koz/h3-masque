@@ -132,7 +132,6 @@ async fn main() -> anyhow::Result<()> {
 
         let req = http::Request::builder()
             .uri("https://127.0.0.1:8443/")
-            .header("x-advertise-address", format!("{}", local_addr))
             .body(())?;
 
         // sending request results in a bidirectional stream,

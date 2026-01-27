@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use h3::proto::stream::StreamId;
 use h3::{quic::BidiStream, server::RequestStream};
@@ -14,9 +15,15 @@ use tokio::net::UdpSocket;
 use tokio::task::JoinHandle;
 use tracing::{error, info};
 
+#[async_trait]
+pub trait UdpProxyService {
+    async fn authenticate(&self, req: &Request<()>) -> anyhow::Result<bool>;
+}
+
 pub async fn serve_udp_proxy(
     registration: &msquic::Registration,
     server_addr: SocketAddr,
+    service: Arc<dyn UdpProxyService + Send + Sync>,
 ) -> anyhow::Result<()> {
     let alpn = [msquic::BufferRef::from("h3")];
 
@@ -34,7 +41,7 @@ pub async fn serve_udp_proxy(
         ),
     )?;
 
-    #[cfg(any(not(windows), feature = "quictls"))]
+    #[cfg(not(windows))]
     {
         use std::io::Write;
         use tempfile::NamedTempFile;
@@ -59,7 +66,7 @@ pub async fn serve_udp_proxy(
         configuration.load_credential(&cred_config)?;
     }
 
-    #[cfg(all(windows, not(feature = "quictls")))]
+    #[cfg(windows)]
     {
         use schannel::RawPointer;
         use schannel::cert_context::{CertContext, KeySpec};
@@ -116,134 +123,150 @@ pub async fn serve_udp_proxy(
     info!("listening on {}", server_addr);
 
     // handle incoming connections and requests
-
     while let Ok(conn) = listener.accept().await {
         info!("new connection established");
-        tokio::spawn(async move {
-            let sessions: Arc<Mutex<HashMap<StreamId, Arc<UdpSocket>>>> =
-                Arc::new(Mutex::new(HashMap::new()));
-            let mut h3_conn =
-                h3::server::Connection::new(h3_msquic_async::Connection::new(conn)).await?;
-            let mut datagram_reader = h3_conn.get_datagram_reader();
-            let sessions_clone = sessions.clone();
+        {
+            let service = service.clone();
             tokio::spawn(async move {
-                loop {
-                    let datagram = datagram_reader.read_datagram().await?;
-                    info!("received datagram: {:?}", datagram);
-                    let stream_id = datagram.stream_id();
-                    let datagram = datagram.into_payload();
-                    if let Some((context_id, payload)) = crate::decode_var_int(datagram.chunk()) {
-                        if context_id == 0 {
-                            let socket = {
-                                let guard = sessions_clone.lock().unwrap();
-                                guard.get(&stream_id).expect("socket registered").clone()
-                            };
-                            if let Err(err) = socket.send(payload).await {
-                                error!("failed to send datagram: {:?}", err);
-                                continue;
-                            }
-                        } else {
-                            info!("received datagram with context id {}", context_id);
-                            break;
-                        }
-                    } else {
-                        error!("failed to decode var int from datagram");
-                        continue;
-                    }
-                }
-                anyhow::Ok(())
-            });
-
-            loop {
-                match h3_conn.accept().await? {
-                    Some(req_resolver) => {
-                        let (req, mut stream) = match req_resolver.resolve_request().await {
-                            Ok(req) => req,
-                            Err(err) => {
-                                error!("error resolving request: {}", err);
-                                continue;
-                            }
-                        };
-                        info!("new request: {:#?}", req);
-
-                        let mut datagram_sender = h3_conn.get_datagram_sender(stream.id());
-                        let sessions_clone = sessions.clone();
-                        tokio::spawn(async move {
-                            let (resp, socket) = if crate::validate_connect_udp(&req) {
-                                match crate::path_to_socketaddr(req.uri().path().as_bytes()) {
-                                    Some(addr) => {
-                                        info!("connect-udp to {}", addr);
-                                        let socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
-                                        socket.connect(addr).await?;
-                                        (
-                                            http::Response::builder()
-                                                .status(http::StatusCode::OK)
-                                                .body(())?,
-                                            Some(socket),
-                                        )
-                                    }
-                                    None => {
-                                        error!("invalid path");
-                                        (
-                                            http::Response::builder()
-                                                .status(http::StatusCode::BAD_REQUEST)
-                                                .body(())?,
-                                            None,
-                                        )
-                                    }
+                let sessions: Arc<Mutex<HashMap<StreamId, Arc<UdpSocket>>>> =
+                    Arc::new(Mutex::new(HashMap::new()));
+                let mut h3_conn =
+                    h3::server::Connection::new(h3_msquic_async::Connection::new(conn)).await?;
+                let mut datagram_reader = h3_conn.get_datagram_reader();
+                let sessions_clone = sessions.clone();
+                tokio::spawn(async move {
+                    loop {
+                        let datagram = datagram_reader.read_datagram().await?;
+                        let stream_id = datagram.stream_id();
+                        let datagram = datagram.into_payload();
+                        info!(
+                            "received datagram: stream_id={}, datagram len={}",
+                            stream_id,
+                            datagram.len()
+                        );
+                        if let Some((context_id, payload)) = crate::decode_var_int(datagram.chunk())
+                        {
+                            if context_id == 0 {
+                                let socket = {
+                                    let guard = sessions_clone.lock().unwrap();
+                                    guard.get(&stream_id).expect("socket registered").clone()
+                                };
+                                if let Err(err) = socket.send(payload).await {
+                                    error!("failed to send datagram: {:?}", err);
+                                    continue;
                                 }
                             } else {
-                                (
-                                    http::Response::builder()
-                                        .status(http::StatusCode::BAD_REQUEST)
-                                        .body(())?,
-                                    None,
-                                )
-                            };
+                                info!("received datagram with context id {}", context_id);
+                                break;
+                            }
+                        } else {
+                            error!("failed to decode var int from datagram");
+                            continue;
+                        }
+                    }
+                    anyhow::Ok(())
+                });
 
-                            match stream.send_response(resp).await {
-                                Ok(_) => {
-                                    info!("successfully respond to connection");
-                                }
+                loop {
+                    match h3_conn.accept().await? {
+                        Some(req_resolver) => {
+                            let (req, mut stream) = match req_resolver.resolve_request().await {
+                                Ok(req) => req,
                                 Err(err) => {
-                                    error!("unable to send response to connection peer: {:?}", err);
+                                    error!("error resolving request: {}", err);
+                                    continue;
                                 }
+                            };
+                            info!("new request: {:#?}", req);
+                            let authenticated = service.authenticate(&req).await?;
+                            if !authenticated {
+                                error!("authentication failed");
+                                continue;
                             }
 
-                            if let Some(socket) = socket {
-                                {
-                                    let mut guard = sessions_clone.lock().unwrap();
-                                    guard.insert(stream.id(), socket.clone());
-                                }
-                                let mut buf = [0; 65535];
-                                loop {
-                                    let len = socket.recv(&mut buf).await?;
-                                    let mut datagram = BytesMut::with_capacity(1 + len);
-                                    datagram.put_u8(0); // 1 byte for datagram header
-                                    datagram.put_slice(&buf[..len]);
-                                    match datagram_sender.send_datagram(datagram.freeze()) {
-                                        Ok(_) => {
-                                            info!("sent datagram to stream {}", stream.id());
+                            let mut datagram_sender = h3_conn.get_datagram_sender(stream.id());
+                            let sessions_clone = sessions.clone();
+                            tokio::spawn(async move {
+                                let (resp, socket) = if crate::validate_connect_udp(&req) {
+                                    match crate::path_to_socketaddr(req.uri().path().as_bytes()) {
+                                        Some(addr) => {
+                                            info!("connect-udp to {}", addr);
+                                            let socket =
+                                                Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
+                                            socket.connect(addr).await?;
+                                            (
+                                                http::Response::builder()
+                                                    .status(http::StatusCode::OK)
+                                                    .body(())?,
+                                                Some(socket),
+                                            )
                                         }
-                                        Err(err) => {
-                                            error!("failed to send datagram: {:?}", err);
-                                            continue;
+                                        None => {
+                                            error!("invalid path");
+                                            (
+                                                http::Response::builder()
+                                                    .status(http::StatusCode::BAD_REQUEST)
+                                                    .body(())?,
+                                                None,
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    (
+                                        http::Response::builder()
+                                            .status(http::StatusCode::BAD_REQUEST)
+                                            .body(())?,
+                                        None,
+                                    )
+                                };
+
+                                match stream.send_response(resp).await {
+                                    Ok(_) => {
+                                        info!("successfully respond to connection");
+                                    }
+                                    Err(err) => {
+                                        error!(
+                                            "unable to send response to connection peer: {:?}",
+                                            err
+                                        );
+                                    }
+                                }
+
+                                if let Some(socket) = socket {
+                                    {
+                                        let mut guard = sessions_clone.lock().unwrap();
+                                        guard.insert(stream.id(), socket.clone());
+                                    }
+                                    let mut buf = [0; 65535];
+                                    loop {
+                                        let len = socket.recv(&mut buf).await?;
+                                        let mut datagram = BytesMut::with_capacity(1 + len);
+                                        datagram.put_u8(0); // 1 byte for datagram header
+                                        datagram.put_slice(&buf[..len]);
+                                        match datagram_sender.send_datagram(datagram.freeze()) {
+                                            Ok(_) => {
+                                                info!("sent datagram to stream {}", stream.id());
+                                            }
+                                            Err(err) => {
+                                                error!("failed to send datagram: {:?}", err);
+                                                continue;
+                                            }
                                         }
                                     }
                                 }
-                            }
-                            anyhow::Ok(stream.finish().await?)
-                        });
-                    }
+                                anyhow::Ok(stream.finish().await?)
+                            });
+                        }
 
-                    // indicating no more streams to be received
-                    None => {
-                        break;
+                        // indicating no more streams to be received
+                        None => {
+                            break;
+                        }
                     }
                 }
-            }
-            Ok::<_, anyhow::Error>(())
-        });
+                Ok::<_, anyhow::Error>(())
+            });
+        }
     }
     Ok(())
 }
@@ -256,6 +279,7 @@ struct ContextInfo {
 pub async fn serve_udp_bind_proxy(
     registration: &msquic::Registration,
     server_addr: SocketAddr,
+    service: Arc<dyn UdpProxyService + Send + Sync>,
 ) -> anyhow::Result<()> {
     let alpn = [msquic::BufferRef::from("h3")];
 
@@ -274,7 +298,7 @@ pub async fn serve_udp_bind_proxy(
         ),
     )?;
 
-    #[cfg(any(not(windows), feature = "quictls"))]
+    #[cfg(not(windows))]
     {
         use std::io::Write;
         use tempfile::NamedTempFile;
@@ -299,7 +323,7 @@ pub async fn serve_udp_bind_proxy(
         configuration.load_credential(&cred_config)?;
     }
 
-    #[cfg(all(windows, not(feature = "quictls")))]
+    #[cfg(windows)]
     {
         use schannel::RawPointer;
         use schannel::cert_context::{CertContext, KeySpec};
@@ -356,46 +380,53 @@ pub async fn serve_udp_bind_proxy(
     info!("listening on {}", server_addr);
 
     // handle incoming connections and requests
-
     while let Ok(conn) = listener.accept().await {
         info!("new connection established");
-        tokio::spawn(async move {
-            let sessions: Arc<
-                Mutex<HashMap<StreamId, (Arc<UdpSocket>, HashMap<u64, Option<SocketAddr>>)>>,
-            > = Arc::new(Mutex::new(HashMap::new()));
-            let mut h3_conn =
-                h3::server::Connection::new(h3_msquic_async::Connection::new(conn)).await?;
+        {
+            let service = service.clone();
+            tokio::spawn(async move {
+                let sessions: Arc<
+                    Mutex<HashMap<StreamId, (Arc<UdpSocket>, HashMap<u64, Option<SocketAddr>>)>>,
+                > = Arc::new(Mutex::new(HashMap::new()));
+                let mut h3_conn =
+                    h3::server::Connection::new(h3_msquic_async::Connection::new(conn)).await?;
 
-            let _handle_datagram =
-                run_server_process_datagram(h3_conn.get_datagram_reader(), sessions.clone());
-            loop {
-                match h3_conn.accept().await? {
-                    Some(req_resolver) => {
-                        let (req, stream) = match req_resolver.resolve_request().await {
-                            Ok(req) => req,
-                            Err(err) => {
-                                error!("error resolving request: {}", err);
+                let _handle_datagram =
+                    run_server_process_datagram(h3_conn.get_datagram_reader(), sessions.clone());
+                loop {
+                    match h3_conn.accept().await? {
+                        Some(req_resolver) => {
+                            let (req, stream) = match req_resolver.resolve_request().await {
+                                Ok(req) => req,
+                                Err(err) => {
+                                    error!("error resolving request: {}", err);
+                                    continue;
+                                }
+                            };
+                            info!("new request: {:#?}", req);
+                            let authenticated = service.authenticate(&req).await?;
+                            if !authenticated {
+                                error!("authentication failed");
                                 continue;
                             }
-                        };
-                        info!("new request: {:#?}", req);
 
-                        let stream_id = stream.id();
-                        let _handle_request = run_server_process_request(
-                            stream,
-                            h3_conn.get_datagram_sender(stream_id),
-                            sessions.clone(),
-                            req,
-                        );
-                    }
-                    // indicating no more streams to be received
-                    None => {
-                        break;
+                            let stream_id = stream.id();
+                            let _handle_request = run_server_process_request(
+                                stream,
+                                h3_conn.get_datagram_sender(stream_id),
+                                sessions.clone(),
+                                req,
+                            );
+                        }
+                        // indicating no more streams to be received
+                        None => {
+                            break;
+                        }
                     }
                 }
-            }
-            anyhow::Ok(())
-        });
+                anyhow::Ok(())
+            });
+        }
     }
     Ok(())
 }

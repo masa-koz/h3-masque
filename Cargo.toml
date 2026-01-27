@@ -12,11 +12,11 @@ quictls = []
 [dependencies]
 anyhow = "1.0.80"
 argh = "0.1.10"
+async-trait = "0.1.89"
 bytes = "1.5.0"
 h3 = "0.0.8"
 h3-datagram = "0.0.2"
-# h3-msquic-async = { git = "https://github.com/masa-koz/msquic-async-rs.git", branch = "masa-koz/address-discovery", features = ["datagram"] }
-h3-msquic-async = { path = "../msquic-async-rs/h3-msquic-async", features = ["datagram"] }
+h3-msquic-async = { version = "0.3.1", default-features = false, features = ["msquic-seera", "datagram"] }
 http = "1"
 rand = "0.8"
 schannel = "0.1.27"

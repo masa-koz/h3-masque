@@ -1,6 +1,19 @@
+use async_trait::async_trait;
 use h3_msquic_async::msquic;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tracing::info;
+
+struct UdpProxyClientServiceImpl;
+
+#[async_trait]
+impl h3_masque::client::UdpProxyClientService for UdpProxyClientServiceImpl {
+    async fn event(&self, event: h3_masque::client::UdpProxyClientEvent) -> anyhow::Result<()> {
+        // Implement your authentication logic here.
+        info!("UDP proxy event: {:?}", event);
+        Ok(())
+    }
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -17,7 +30,15 @@ async fn main() -> anyhow::Result<()> {
 
     let registration = msquic::Registration::new(&msquic::RegistrationConfig::default())?;
 
-    h3_masque::client::connect_udp_proxy(&registration, local_addr, server_addr, remote_addr).await?;
+    h3_masque::client::connect_udp_proxy(
+        &registration,
+        local_addr,
+        server_addr,
+        remote_addr,
+        Arc::new(UdpProxyClientServiceImpl),
+    )
+    .await?;
+
     info!("UDP proxy finished");
     Ok(())
 }

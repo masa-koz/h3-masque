@@ -1,6 +1,7 @@
 use anyhow::bail;
+use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use futures::stream::{self, StreamExt};
+use futures::stream::{self, StreamExt, select_all};
 use futures_concurrency::prelude::*;
 use futures_concurrency::stream::StreamGroup;
 use h3::{client::RequestStream as ClientRequestStream, quic::BidiStream};
@@ -19,11 +20,26 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::{error, info};
 
+#[async_trait]
+pub trait UdpProxyClientService {
+    async fn event(&self, event: UdpProxyClientEvent) -> anyhow::Result<()>;
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UdpProxyClientEvent {
+    IndicatePublicAddress(SocketAddr),
+    IndicateObservedAddress {
+        local_address: SocketAddr,
+        observed_address: SocketAddr,
+    },
+}
+
 pub async fn connect_udp_proxy(
     registration: &msquic::Registration,
     local_addr: SocketAddr,
     server_addr: SocketAddr,
     remote_addr: SocketAddr,
+    service: Arc<dyn UdpProxyClientService + Send + Sync>,
 ) -> anyhow::Result<()> {
     let socket = UdpSocket::bind(local_addr).await?;
     let local_addr = socket.local_addr()?;
@@ -53,6 +69,57 @@ pub async fn connect_udp_proxy(
         server_addr.port(),
     )
     .await?;
+
+    let event_handle = {
+        let conn = conn.clone();
+        let service = service.clone();
+        tokio::task::spawn(async move {
+            while let Ok(event) = poll_fn(|cx| conn.poll_event(cx)).await {
+                match event {
+                    msquic_async::ConnectionEvent::NotifyObservedAddress {
+                        local_address,
+                        observed_address,
+                    } => {
+                        if let Err(err) = service
+                            .event(UdpProxyClientEvent::IndicateObservedAddress {
+                                local_address,
+                                observed_address,
+                            })
+                            .await
+                        {
+                            error!("failed to send NotifyObservedAddress event: {:?}", err);
+                        }
+                    }
+                    msquic_async::ConnectionEvent::NotifyRemoteAddressAdded {
+                        address,
+                        sequence_number,
+                    } => {
+                        info!(
+                            "remote address added address: {}, sequence number: {}",
+                            address, sequence_number
+                        );
+                    }
+                    msquic_async::ConnectionEvent::PathValidated {
+                        local_address,
+                        remote_address,
+                    } => {
+                        info!(
+                            "path validated local address: {}, remote address: {}",
+                            local_address, remote_address
+                        );
+                    }
+                    msquic_async::ConnectionEvent::NotifyRemoteAddressRemoved {
+                        sequence_number,
+                    } => {
+                        info!(
+                            "remote address removed with sequence number: {}",
+                            sequence_number
+                        );
+                    }
+                }
+            }
+        })
+    };
 
     let handle = tokio::spawn(async move {
         let h3_conn = h3_msquic_async::Connection::new(conn);
@@ -224,25 +291,14 @@ struct ClientContextInfo {
     addr_to_id_map: HashMap<SocketAddr, u64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum BoundProxyEvent {
-    NotifyPublicAddress(SocketAddr),
-    NotifyObservedAddress {
-        local_address: SocketAddr,
-        observed_address: SocketAddr,
-    },
-}
-
 pub async fn connect_udp_bind_proxy(
     registration: &msquic::Registration,
     config: Option<&msquic::Configuration>,
     local_bind_addr: SocketAddr,
     server_addr: SocketAddr,
     target_addr: Option<SocketAddr>,
-) -> anyhow::Result<(
-    JoinHandle<anyhow::Result<()>>,
-    mpsc::Receiver<BoundProxyEvent>,
-)> {
+    service: Arc<dyn UdpProxyClientService + Send + Sync>,
+) -> anyhow::Result<JoinHandle<anyhow::Result<()>>> {
     let alpn = [msquic::BufferRef::from("h3")];
     let configuration = msquic::Configuration::open(
         &registration,
@@ -274,11 +330,9 @@ pub async fn connect_udp_bind_proxy(
     )
     .await?;
 
-    let (event_sender, event_receiver) = mpsc::channel(1);
-
     let event_handle = {
         let conn = conn.clone();
-        let event_sender = event_sender.clone();
+        let service = service.clone();
         tokio::task::spawn(async move {
             while let Ok(event) = poll_fn(|cx| conn.poll_event(cx)).await {
                 match event {
@@ -286,8 +340,8 @@ pub async fn connect_udp_bind_proxy(
                         local_address,
                         observed_address,
                     } => {
-                        if let Err(err) = event_sender
-                            .send(BoundProxyEvent::NotifyObservedAddress {
+                        if let Err(err) = service
+                            .event(UdpProxyClientEvent::IndicateObservedAddress {
                                 local_address,
                                 observed_address,
                             })
@@ -326,6 +380,7 @@ pub async fn connect_udp_bind_proxy(
             }
         })
     };
+
     let handle = tokio::spawn(async move {
         let h3_conn = h3_msquic_async::Connection::new(conn);
 
@@ -397,8 +452,8 @@ pub async fn connect_udp_bind_proxy(
                 bail!("no public address provided by server");
             }
             for addr in public_addrs.into_iter() {
-                if let Err(err) = event_sender
-                    .send(BoundProxyEvent::NotifyPublicAddress(addr))
+                if let Err(err) = service
+                    .event(UdpProxyClientEvent::IndicatePublicAddress(addr))
                     .await
                 {
                     error!("failed to send NotifyPublicAddress event: {:?}", err);
@@ -641,7 +696,7 @@ pub async fn connect_udp_bind_proxy(
         info!("request finished");
         anyhow::Ok(())
     });
-    Ok((handle, event_receiver))
+    Ok(handle)
 }
 
 async fn recv_capsule_response<T>(

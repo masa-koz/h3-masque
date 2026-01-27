@@ -1,6 +1,7 @@
 use std::{future::poll_fn, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use argh::FromArgs;
+use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use h3::{quic::BidiStream, server::RequestStream};
 use h3_msquic_async::{msquic, msquic_async};
@@ -12,9 +13,25 @@ use tracing::{error, info};
 #[derive(FromArgs, Clone)]
 /// server args
 pub struct CmdOptions {
+    /// server address
+    #[argh(option, default = "String::from(\"127.0.0.1:4443\")")]
+    server_addr: String,
+
     /// root path
     #[argh(option)]
     root: Option<PathBuf>,
+}
+
+struct UdpProxyClientServiceImpl {
+    event_sender: mpsc::Sender<h3_masque::client::UdpProxyClientEvent>,
+}
+
+#[async_trait]
+impl h3_masque::client::UdpProxyClientService for UdpProxyClientServiceImpl {
+    async fn event(&self, event: h3_masque::client::UdpProxyClientEvent) -> anyhow::Result<()> {
+        self.event_sender.send(event).await?;
+        Ok(())
+    }
 }
 
 #[tokio::main]
@@ -30,27 +47,35 @@ async fn main() -> anyhow::Result<()> {
     let root = Arc::new(cmd_opts.root);
 
     let local_bind_addr: SocketAddr = "127.0.0.1:8443".parse()?;
-    let server_addr: SocketAddr = "153.127.33.247:4443".parse()?;
+    let server_addr = cmd_opts
+        .server_addr
+        .parse::<std::net::SocketAddr>()
+        .map_err(|e| anyhow::anyhow!("failed to parse server address: {}", e))?;
     let target_addr: Option<SocketAddr> = None;
 
     let registration = msquic::Registration::new(&msquic::RegistrationConfig::default())?;
 
-    let (_handle, mut event_receiver) = h3_masque::client::connect_udp_bind_proxy(
+    let (event_sender, mut event_receiver) =
+        mpsc::channel::<h3_masque::client::UdpProxyClientEvent>(10);
+    let svc = UdpProxyClientServiceImpl { event_sender };
+
+    let _handle = h3_masque::client::connect_udp_bind_proxy(
         &registration,
         None,
         local_bind_addr,
         server_addr,
         target_addr,
+        Arc::new(svc),
     )
     .await?;
     let (observed_sender, mut observed_receiver) = mpsc::channel(1);
     tokio::spawn(async move {
         while let Some(event) = event_receiver.recv().await {
             match event {
-                h3_masque::client::BoundProxyEvent::NotifyPublicAddress(public_addr) => {
+                h3_masque::client::UdpProxyClientEvent::IndicatePublicAddress(public_addr) => {
                     info!("Received public addresses: {}", public_addr);
                 }
-                h3_masque::client::BoundProxyEvent::NotifyObservedAddress {
+                h3_masque::client::UdpProxyClientEvent::IndicateObservedAddress {
                     local_address,
                     observed_address,
                 } => {
@@ -60,11 +85,11 @@ async fn main() -> anyhow::Result<()> {
                     );
                     observed_sender
                         .send((local_address, observed_address))
-                        .await
-                        .unwrap();
+                        .await?;
                 }
             }
         }
+        anyhow::Ok(())
     });
 
     let alpn = [msquic::BufferRef::from("h3")];
@@ -82,11 +107,11 @@ async fn main() -> anyhow::Result<()> {
                 .set_DatagramReceiveEnabled()
                 .set_StreamMultiReceiveEnabled()
                 .set_ServerMigrationEnabled(),
-                // .set_AddAddressMode(msquic::AddAddressMode::Manual),
+            // .set_AddAddressMode(msquic::AddAddressMode::Manual),
         ),
     )?;
 
-    #[cfg(any(not(windows), feature = "quictls"))]
+    #[cfg(not(windows))]
     {
         use std::io::Write;
         use tempfile::NamedTempFile;
@@ -111,7 +136,7 @@ async fn main() -> anyhow::Result<()> {
         configuration.load_credential(&cred_config)?;
     }
 
-    #[cfg(all(windows, not(feature = "quictls")))]
+    #[cfg(windows)]
     {
         use schannel::RawPointer;
         use schannel::cert_context::{CertContext, KeySpec};
@@ -154,7 +179,7 @@ async fn main() -> anyhow::Result<()> {
         );
 
         configuration.load_credential(&cred_config)?;
-    };
+    }
 
     let listener = msquic_async::Listener::new(&registration, configuration)?;
 
