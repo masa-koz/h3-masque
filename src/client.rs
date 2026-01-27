@@ -1,7 +1,7 @@
 use anyhow::bail;
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use futures::stream::{self, StreamExt, select_all};
+use futures::stream::{self, StreamExt};
 use futures_concurrency::prelude::*;
 use futures_concurrency::stream::StreamGroup;
 use h3::{client::RequestStream as ClientRequestStream, quic::BidiStream};
@@ -278,6 +278,7 @@ pub async fn connect_udp_proxy(
         }
 
         info!("request finished");
+        event_handle.await?;
         anyhow::Ok(())
     });
 
